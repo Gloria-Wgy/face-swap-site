@@ -10,7 +10,7 @@
     .muted { color: #666; font-size: 14px; }
     .row { margin: 14px 0; }
     input[type="file"] { display:block; margin: 6px 0 10px; }
-    input[type="email"], input[type="text"] { width: 320px; max-width: 100%; padding: 8px 10px; font-size: 14px; }
+    input[type="email"] { width: 320px; max-width: 100%; padding: 8px 10px; font-size: 14px; }
     button { padding: 10px 16px; cursor: pointer; border-radius: 6px; border: 1px solid #dadada; background: #fff; }
     button:hover { background: #f7f7f7; }
     #gallery { margin-top:16px; display:grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap:12px; }
@@ -22,13 +22,13 @@
 </head>
 <body>
   <h1>上传两张照片，生成 10 张换脸场景 PDF 预览</h1>
-  <div class="muted">仅限每个邮箱免费一次（预览带水印）</div>
+  <div class="muted">每个邮箱仅免费一次（预览带水印）</div>
 
   <div class="row">
-    <label>邮箱（获取上传资格 token）：</label>
+    <label>邮箱：</label>
     <input id="email" type="email" placeholder="you@example.com" />
-    <button id="getLinkBtn">获取上传链接（MVP：直接返回 token）</button>
-    <div class="muted">也可直接在 URL 上携带 <code>?token=...</code> 访问本页。</div>
+    <button id="getLinkBtn">获取上传链接</button>
+    <div class="muted">页面会自动刷新并携带 token。</div>
   </div>
 
   <hr/>
@@ -45,19 +45,16 @@
   <div id="gallery"></div>
 
   <script>
-    // ===== 配置你的后端域名 =====
     const API_BASE = "https://face-swap-site.vercel.app";
-
-    // 从 URL 读取 token；也可以通过“获取上传链接”按钮拿到后自动刷新页面携带 token
     let token = new URLSearchParams(location.search).get("token") || "";
 
     const emailInput = document.getElementById("email");
-    const getLinkBtn  = document.getElementById("getLinkBtn");
-    const goBtn       = document.getElementById("goBtn");
-    const statusBox   = document.getElementById("status");
-    const gallery     = document.getElementById("gallery");
+    const getLinkBtn = document.getElementById("getLinkBtn");
+    const goBtn = document.getElementById("goBtn");
+    const statusBox = document.getElementById("status");
+    const gallery = document.getElementById("gallery");
 
-    // 获取上传链接：成功后自动把 token 写入 URL（location.replace 不留历史记录）
+    // 获取上传链接并自动跳转
     getLinkBtn.onclick = async () => {
       const email = (emailInput.value || "").trim();
       if (!email) return alert("请输入邮箱");
@@ -73,17 +70,13 @@
         }
         const url = new URL(location.href);
         url.searchParams.set("token", data.token);
-        // 可选：移除其它多余参数
-        for (const k of Array.from(url.searchParams.keys())) {
-          if (k !== "token") url.searchParams.delete(k);
-        }
-        location.replace(url.toString());
+        location.replace(url.toString()); // 刷新并带上 token
       } catch (e) {
         alert("获取链接失败：" + e.message);
       }
     };
 
-    // 页面加载时，如果已携带 token，小提示一下
+    // 页面加载时提示 token
     window.addEventListener("DOMContentLoaded", () => {
       if (token) {
         const short = token.slice(0, 12) + "…";
@@ -95,25 +88,19 @@
       }
     });
 
-    // 主流程：上传两张图 → 批量生成 → 合成 PDF
+    // 上传并生成 PDF
     goBtn.onclick = async () => {
       try {
-        if (!token) return alert("缺少上传资格 token，请先获取或在链接上携带 ?token=...");
+        if (!token) return alert("缺少 token，请先获取上传链接");
 
         const s = document.getElementById("source").files[0];
         const t = document.getElementById("target").files[0];
         if (!s || !t) return alert("请先选择两张照片");
 
-        // 可选：先查是否已用过免费
-        const chkRes = await fetch(`${API_BASE}/api/check-free?token=${encodeURIComponent(token)}`);
-        const chk = await chkRes.json();
-        if (!chkRes.ok || !chk.ok) return alert("token 无效或过期");
-        if (chk.used) return alert("该邮箱的免费次数已用完");
-
         statusBox.textContent = "正在生成，请稍候…";
         gallery.innerHTML = "";
 
-        // 1) faceswap-batch：multipart 上传两张源脸
+        // 上传两张源脸
         const fd = new FormData();
         fd.append("source", s);
         fd.append("target", t);
@@ -127,16 +114,16 @@
         if (!res.ok) throw new Error(data?.error || "生成失败");
         if (!data.images?.length) throw new Error("未返回图片");
 
-        // 预览 10 张缩略图
+        // 显示缩略图
         data.images.forEach(it => {
           const div = document.createElement("div");
           div.className = "card";
-          div.innerHTML = `<div class="muted" style="margin-bottom:6px;">${it.scene}</div>
+          div.innerHTML = `<div class="muted">${it.scene}</div>
                            <img src="data:image/png;base64,${it.b64}" loading="lazy" />`;
           gallery.appendChild(div);
         });
 
-        // 2) generate-pdf：把生成的 10 张合并为 PDF（新窗口打开）
+        // 合成 PDF
         statusBox.textContent = "正在生成 PDF 预览…";
         const pdfRes = await fetch(`${API_BASE}/api/generate-pdf`, {
           method: "POST",
@@ -147,7 +134,7 @@
         const blob = await pdfRes.blob();
         const url = URL.createObjectURL(blob);
         window.open(url, "_blank");
-        statusBox.textContent = "已生成 PDF 预览 ✅";
+        statusBox.textContent = "已生成 PDF ✅";
       } catch (e) {
         statusBox.textContent = "出错：" + e.message;
       }
