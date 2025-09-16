@@ -1,27 +1,22 @@
-export const config = { runtime: "nodejs" };
+// file: api/check-free.js  （CommonJS 版本）
+exports.config = { runtime: "nodejs" };
 
-import jwt from "jsonwebtoken";
-import crypto from "crypto";
-import { Redis } from "@upstash/redis";
+const jwt = require("jsonwebtoken");
+const crypto = require("crypto");
+const { Redis } = require("@upstash/redis");
 
-// Upstash（未配置则为 null，自动跳过限次，方便联调）
+// 允许的前端域名
+const ALLOWED_ORIGINS = ["https://face-swap-site.vercel.app"];
+
+// Upstash 客户端（没配也能跑，直接视为未限制）
 const redisClient =
   process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN
-    ? new Redis({
-        url: process.env.UPSTASH_REDIS_REST_URL,
-        token: process.env.UPSTASH_REDIS_REST_TOKEN,
-      })
+    ? new Redis({ url: process.env.UPSTASH_REDIS_REST_URL, token: process.env.UPSTASH_REDIS_REST_TOKEN })
     : null;
-
-// CORS：支持从环境变量配置多个来源，逗号分隔
-const ORIGINS =
-  (process.env.FRONTEND_ORIGIN || "https://face-swap-site.vercel.app")
-    .split(",")
-    .map(s => s.trim());
 
 function setCors(req, res) {
   const origin = req.headers.origin;
-  if (origin && ORIGINS.includes(origin)) {
+  if (origin && ALLOWED_ORIGINS.includes(origin)) {
     res.setHeader("Access-Control-Allow-Origin", origin);
   }
   res.setHeader("Vary", "Origin");
@@ -34,35 +29,30 @@ function setCors(req, res) {
   return false;
 }
 
-export default async function handler(req, res) {
+module.exports = async function handler(req, res) {
   if (setCors(req, res)) return;
+
   if (req.method !== "GET") {
     return res.status(405).json({ ok: false, error: "Only GET allowed" });
   }
 
-  // token: 支持 query 或 Authorization 头
-  const auth = req.headers.authorization || "";
-  const bearer = auth.startsWith("Bearer ") ? auth.slice(7) : null;
-  const token = bearer || (req.query ? req.query.token : null);
-  if (!token) {
-    return res.status(400).json({ ok: false, error: "Missing token" });
-  }
+  const { token } = req.query || {};
+  if (!token) return res.status(400).json({ ok: false, error: "Missing token" });
 
   try {
     const { email } = jwt.verify(token, process.env.JWT_SECRET);
     const key = "free_count:" + crypto.createHash("sha256").update(email).digest("hex");
-let count = 0;
-if (redisClient) {
-  const current = await redisClient.get(key);
-  count = parseInt(current || "0", 10);
-}
-const remaining = Math.max(0, 10 - count);
-return res.status(200).json({ ok: true, email, used: count, remaining: Math.max(0, 10 - count) });
+
+    if (!redisClient) {
+      // 未接 Upstash，默认未用，方便先联调
+      return res.status(200).json({ ok: true, email, used: 0, remaining: 10, note: "no upstash" });
     }
 
-    const used = await redisClient.get<string | null>(key);
-    return res.status(200).json({ ok: true, email, used: count, remaining });
+    const current = await redisClient.get(key);
+    const used = parseInt(current || "0", 10);
+    const remaining = Math.max(0, 10 - used);
+    return res.status(200).json({ ok: true, email, used, remaining });
   } catch (e) {
     return res.status(401).json({ ok: false, error: "Invalid or expired token" });
   }
-}
+};
