@@ -1,153 +1,129 @@
-export const config = { runtime: "nodejs" };
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>上传照片生成写真集（免费预览一次）</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 880px; margin: 24px auto; padding: 0 16px; }
+    h1 { margin-bottom: 4px; }
+    .muted { color: #666; font-size: 14px; }
+    .row { margin: 12px 0; }
+    input[type="file"] { display:block; margin: 6px 0; }
+    button { padding: 8px 14px; cursor: pointer; }
+    #gallery { margin-top:16px; display:grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap:12px; }
+    .card { border:1px solid #e5e5e5; border-radius:8px; padding:8px; }
+    .card img { width:100%; border-radius:6px; display:block; }
+    #status { margin-top:10px; font-weight:bold; }
+  </style>
+</head>
+<body>
+  <h1>上传两张照片，生成 10 张换脸场景 PDF 预览</h1>
+  <div class="muted">仅限每个邮箱免费一次（预览带水印）</div>
 
-import OpenAI from "openai";
-import formidable from "formidable";
-import fs from "fs";
-import path from "path";
-import jwt from "jsonwebtoken";
-import crypto from "crypto";
+  <div class="row">
+    <label>邮箱（获取上传资格 token）：</label>
+    <input id="email" type="email" placeholder="you@example.com" />
+    <button id="getLinkBtn">获取上传链接（MVP：直接返回 token）</button>
+    <div class="muted">也可直接在 URL 上携带 ?token=... 访问本页。</div>
+  </div>
 
-// ========= Upstash REST 客户端（推荐） =========
-import { Redis } from "@upstash/redis";
+  <hr/>
 
-// 若环境变量缺失，则 redisClient 为 null，自动跳过限次逻辑
-const redisClient =
-  process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN
-    ? new Redis({
-        url: process.env.UPSTASH_REDIS_REST_URL,
-        token: process.env.UPSTASH_REDIS_REST_TOKEN,
-      })
-    : null;
+  <div class="row">
+    <label>源脸 1：</label>
+    <input id="source" type="file" accept="image/*" />
+    <label>源脸 2：</label>
+    <input id="target" type="file" accept="image/*" />
+    <button id="goBtn">生成 10 张并预览 PDF</button>
+  </div>
 
-// 允许跨域的前端域名
-const ALLOWED_ORIGINS = ["https://face-swap-site.vercel.app"];
+  <div id="status"></div>
+  <div id="gallery"></div>
 
-// 与你仓库 /scenes 完全一致的文件名（区分大小写）
-const SCENES = [
-  "Actor.png",
-  "Artist.png",
-  "Astronaut.png",
-  "Athlete.png",
-  "Doctor.png",
-  "Firefighter.png",
-  "Lawyer.png",
-  "Musician.png",
-  "Policeman.png",
-  "Scientist.png",
-];
+  <script>
+    const API_BASE = "https://face-swap-site.vercel.app"; // 你的后端域名
+    // 1) token 可来自 URL ?token=... 或“获取上传链接”接口
+    let token = new URLSearchParams(location.search).get("token") || "";
 
-function setCors(req, res) {
-  const origin = req.headers.origin;
-  if (origin && ALLOWED_ORIGINS.includes(origin)) {
-    res.setHeader("Access-Control-Allow-Origin", origin);
-  }
-  res.setHeader("Vary", "Origin");
-  res.setHeader("Access-Control-Allow-Methods", "POST,OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type,Authorization");
-  if (req.method === "OPTIONS") {
-    res.status(204).end();
-    return true;
-  }
-  return false;
-}
+    const emailInput = document.getElementById("email");
+    const getLinkBtn  = document.getElementById("getLinkBtn");
+    const goBtn       = document.getElementById("goBtn");
+    const statusBox   = document.getElementById("status");
+    const gallery     = document.getElementById("gallery");
 
-const pickFile = (f) => (Array.isArray(f) ? f[0] : f) || null;
-
-const readLocal = (...segs) => {
-  const p = path.join(process.cwd(), ...segs);
-  return fs.existsSync(p) ? fs.createReadStream(p) : null;
-};
-
-export default async function handler(req, res) {
-  if (setCors(req, res)) return;
-  if (req.method !== "POST") return res.status(405).json({ error: "Only POST" });
-
-  // 1) 校验 token（JWT）
-  const auth = req.headers.authorization || "";
-  const token = auth.startsWith("Bearer ") ? auth.slice(7) : req.query.token;
-  if (!token) return res.status(401).json({ error: "No token" });
-
-  let email;
-  try {
-    ({ email } = jwt.verify(token, process.env.JWT_SECRET));
-  } catch {
-    return res.status(401).json({ error: "Invalid token" });
-  }
-
-  // 2) 免费一次校验（Upstash Redis；若未配置 Upstash 环境变量则跳过）
-  const key = "free_used:" + crypto.createHash("sha256").update(email).digest("hex");
-  try {
-    if (redisClient) {
-      const used = await redisClient.get(key); // 返回 string | null
-      if (used === "1") {
-        return res.status(403).json({ error: "Free chance already used" });
-      }
-    }
-  } catch (e) {
-    console.warn("Upstash get failed, skipping limit:", e?.message);
-  }
-
-  // 3) 解析上传表单（两张源脸）
-  const form = formidable({ multiples: true, keepExtensions: true, uploadDir: "/tmp" });
-  form.parse(req, async (err, fields, files) => {
-    if (err) return res.status(400).json({ error: "File upload error" });
-
-    const src = pickFile(files.source);
-    const tgt = pickFile(files.target);
-    if (!src || !tgt) return res.status(400).json({ error: "Need two photos" });
-
-    const echoB64 = fs.readFileSync(src.filepath).toString("base64");
-    const results = [];
-
-    // 4) 调用 OpenAI（无 KEY 或 USE_ECHO=1 时回显源图）
-    const client = process.env.OPENAI_API_KEY ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY }) : null;
-
-    for (const sceneName of SCENES) {
-      const sceneStream = readLocal("scenes", sceneName);
-      if (!sceneStream) {
-        results.push({ scene: sceneName, b64: echoB64, note: "scene missing" });
-        continue;
-      }
-
-      if (!client || process.env.USE_ECHO === "1") {
-        results.push({ scene: sceneName, b64: echoB64, note: "echo" });
-        continue;
-      }
-
+    getLinkBtn.onclick = async () => {
+      const email = (emailInput.value || "").trim();
+      if (!email) return alert("请输入邮箱");
       try {
-        // 某些 SDK/版本需改用 images.edits；若 400，请参考你当前 SDK 文档调整
-        const r = await client.images.generate({
-          model: "gpt-image-1",
-          prompt:
-            "Replace the main person's face in the scene with the person from the two reference photos. Natural blend, keep pose/body/lighting.",
-          image: [sceneStream, fs.createReadStream(src.filepath), fs.createReadStream(tgt.filepath)],
-          size: "768x768",
-          response_format: "b64_json",
+        const r = await fetch(`${API_BASE}/api/request-magic-link`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email })
+        });
+        const data = await r.json();
+        if (!r.ok || !data?.ok) throw new Error(data?.error || "请求失败");
+        token = data.token;
+        alert(`Token 已获取。\n可直接点“生成”或打开链接：\n${data.link}`);
+      } catch (e) {
+        alert("获取链接失败：" + e.message);
+      }
+    };
+
+    goBtn.onclick = async () => {
+      try {
+        if (!token) return alert("缺少上传资格 token，请先获取或在链接上携带 ?token=...");
+        const s = document.getElementById("source").files[0];
+        const t = document.getElementById("target").files[0];
+        if (!s || !t) return alert("请先选择两张照片");
+
+        // 可选：先查是否已用过免费
+        const chk = await fetch(`${API_BASE}/api/check-free?token=${encodeURIComponent(token)}`).then(r=>r.json());
+        if (!chk.ok) return alert("token 无效或过期");
+        if (chk.used) return alert("该邮箱的免费次数已用完");
+
+        statusBox.textContent = "正在生成，请稍候…";
+        gallery.innerHTML = "";
+
+        // 2) 调用批量换脸（multipart）
+        const fd = new FormData();
+        fd.append("source", s);
+        fd.append("target", t);
+
+        const res = await fetch(`${API_BASE}/api/faceswap-batch`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+          body: fd
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data?.error || "生成失败");
+        if (!data.images?.length) throw new Error("未返回图片");
+
+        // 预览 10 张缩略图
+        data.images.forEach(it => {
+          const div = document.createElement("div");
+          div.className = "card";
+          div.innerHTML = `<div class="muted" style="margin-bottom:6px;">${it.scene}</div>
+                           <img src="data:image/png;base64,${it.b64}" />`;
+          gallery.appendChild(div);
         });
 
-        const b64 = r?.data?.[0]?.b64_json || echoB64;
-        results.push({ scene: sceneName, b64 });
+        // 3) 生成 PDF（POST /api/generate-pdf）
+        statusBox.textContent = "正在生成 PDF 预览…";
+        const pdfRes = await fetch(`${API_BASE}/api/generate-pdf`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ images: data.images, orderId: "free" })
+        });
+        if (!pdfRes.ok) throw new Error("PDF 生成失败");
+        const blob = await pdfRes.blob();
+        const url = URL.createObjectURL(blob);
+        window.open(url, "_blank");
+        statusBox.textContent = "已生成 PDF 预览 ✅";
       } catch (e) {
-        console.error("openai fail", sceneName, e?.message);
-        results.push({ scene: sceneName, b64: echoB64, note: "fallback" });
+        statusBox.textContent = "出错：" + e.message;
       }
-    }
-
-    // 5) 写入“已用一次免费”（Upstash；无 Upstash 则跳过，不影响主流程）
-    try {
-      if (redisClient) {
-        await redisClient.set(key, "1", { ex: 60 * 60 * 24 * 365 }); // 1 年
-      }
-    } catch (e) {
-      console.warn("Upstash set failed:", e?.message);
-    }
-
-    // 6) 清理临时文件（隐私）
-    try {
-      fs.unlinkSync(src.filepath);
-      fs.unlinkSync(tgt.filepath);
-    } catch {}
-
-    return res.status(200).json({ images: results, email });
-  });
-}
+    };
+  </script>
+</body>
+</html>
