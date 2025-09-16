@@ -1,0 +1,12 @@
+{
+  "name": "face-swap-site",
+  "version": "1.0.0",
+  "engines": { "node": ">=18" },
+  "dependencies": {
+    "openai": "^4.0.0",
+    "formidable": "^3.5.1",
+    "pdfkit": "^0.15.0",
+    "jsonwebtoken": "^9.0.2",
+    "@upstash/redis": "^1.31.6"
+  }
+}
