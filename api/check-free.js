@@ -50,19 +50,17 @@ export default async function handler(req, res) {
 
   try {
     const { email } = jwt.verify(token, process.env.JWT_SECRET);
-    const key = "free_used:" + crypto.createHash("sha256").update(email).digest("hex");
-
-    if (!redisClient) {
-      return res.status(200).json({
-        ok: true,
-        email,
-        used: false,
-        note: "no upstash configured, skipping limit"
-      });
+    const key = "free_count:" + crypto.createHash("sha256").update(email).digest("hex");
+let count = 0;
+if (redisClient) {
+  const current = await redisClient.get(key);
+  count = parseInt(current || "0", 10);
+}
+return res.status(200).json({ ok: true, email, used: count, remaining: Math.max(0, 10 - count) });
     }
 
     const used = await redisClient.get<string | null>(key);
-    return res.status(200).json({ ok: true, email, used: used === "1" });
+    return res.status(200).json({ ok: true, email, used: count, remaining: Math.max(0, 10 - count)});
   } catch (e) {
     return res.status(401).json({ ok: false, error: "Invalid or expired token" });
   }
