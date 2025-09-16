@@ -14,7 +14,7 @@ const redisClient =
     : null;
 
 // 允许的前端域名（和其他 API 一致）
-const ALLOWED_ORIGINS = ["https://chatgpt-web-demo-alpha.vercel.app"];
+const ALLOWED_ORIGINS = ["https://face-swap-site.vercel.app"];
 
 function setCors(req, res) {
   const origin = req.headers.origin;
