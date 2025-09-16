@@ -53,7 +53,7 @@
     const goBtn = document.getElementById("goBtn");
     const statusBox = document.getElementById("status");
 
-    // 获取上传 token，并自动把 token 写进当前 URL（不留历史记录）
+    // 获取上传 token，并显示剩余次数
     getLinkBtn.onclick = async () => {
       const email = (emailInput.value || "").trim();
       if (!email) return alert("请输入邮箱");
@@ -67,6 +67,11 @@
         if (!r.ok || !data?.ok || !data?.token) {
           throw new Error(data?.error || "请求失败");
         }
+
+        // 更新剩余次数提示
+        quotaBox.textContent = `已用：${data.used}/10，剩余：${data.remaining}/10`;
+
+        // 自动刷新 URL 并带上 token
         const url = new URL(location.href);
         url.searchParams.set("token", data.token);
         // 可选：移除其他无关参数
@@ -79,17 +84,18 @@
       }
     };
 
-    // 页面加载时，提示是否已带 token（方便确认）
-    window.addEventListener("DOMContentLoaded", () => {
-      if (token) {
-        const short = token.slice(0, 12) + "…";
-        const hint = document.createElement("div");
-        hint.className = "muted";
-        hint.style.marginTop = "6px";
-        hint.textContent = `已携带 token：${short}`;
-        document.querySelector(".row")?.appendChild(hint);
-      }
-    });
+    // 页面加载时，如果有 token，调用 check-free 查看剩余次数
+    async function showQuota() {
+      if (!token) return;
+      try {
+        const r = await fetch(`${API_BASE}/api/check-free?token=${encodeURIComponent(token)}`);
+        const data = await r.json();
+        if (data.ok) {
+          quotaBox.textContent = `已用：${data.used}/10，剩余：${data.remaining}/10`;
+        }
+      } catch {}
+    }
+    showQuota();
 
     // 生成：直接向 /api/faceswap-batch 发送 multipart，返回 PDF 文件流
     goBtn.onclick = async () => {
@@ -126,6 +132,12 @@
         const url = URL.createObjectURL(blob);
         window.open(url, "_blank");                     // 新标签页预览 PDF
         statusBox.textContent = "已生成 PDF ✅";
+      } catch (e) {
+        statusBox.textContent = "出错：" + e.message;
+      }
+
+      // 生成成功后，刷新剩余次数显示
+        showQuota();
       } catch (e) {
         statusBox.textContent = "出错：" + e.message;
       }
