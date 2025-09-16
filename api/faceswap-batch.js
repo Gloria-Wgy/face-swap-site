@@ -61,8 +61,10 @@ export default async function handler(req, res) {
   try {
     if (redisClient) {
       const used = await redisClient.get(key);
-      if (used === "1") return res.status(403).json({ error: "Free chance already used" });
-    }
+      count = parseInt(current || "0", 10);
+  if (count >= 10) {
+    return res.status(403).json({ error: "已用完 10 次免费机会" });
+  }
   } catch (e) {
     console.warn("Upstash get failed:", e?.message);
   }
