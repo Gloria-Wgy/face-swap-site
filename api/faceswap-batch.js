@@ -18,17 +18,30 @@ const redisClient =
 
 // ===== 可配置 CORS 白名单（逗号分隔），默认你的域名 =====
 const ALLOWED_ORIGINS = (process.env.FRONTEND_ORIGIN || "https://face-swap-site.vercel.app")
-  .split(",").map(s => s.trim());
+  .split(",")
+  .map((s) => s.trim());
 
 // ===== 场景文件名（与 /scenes 目录严格一致，区分大小写）=====
 const SCENES = [
-  "Actor.png","Artist.png","Astronaut.png","Athlete.png","Doctor.png",
-  "Firefighter.png","Lawyer.png","Musician.png","Policeman.png","Scientist.png"
+  "Actor.png",
+  "Artist.png",
+  "Astronaut.png",
+  "Athlete.png",
+  "Doctor.png",
+  "Firefighter.png",
+  "Lawyer.png",
+  "Musician.png",
+  "Policeman.png",
+  "Scientist.png",
 ];
 
 // ===== 可选的“假预览”合成：贴缩略图+标签 =====
 let sharp = null;
-try { sharp = (await import("sharp")).default; } catch { /* 若未安装则退化 */ }
+try {
+  sharp = (await import("sharp")).default;
+} catch {
+  /* 若未安装则退化 */
+}
 
 function setCors(req, res) {
   const origin = req.headers.origin;
@@ -36,12 +49,15 @@ function setCors(req, res) {
   res.setHeader("Vary", "Origin");
   res.setHeader("Access-Control-Allow-Methods", "POST,OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type,Authorization");
-  if (req.method === "OPTIONS") { res.status(204).end(); return true; }
+  if (req.method === "OPTIONS") {
+    res.status(204).end();
+    return true;
+  }
   return false;
 }
-const pickFile = f => (Array.isArray(f) ? f[0] : f) || null;
-const sceneAbs = name => path.join(process.cwd(), "scenes", name);
-const readLocalStream = name => fs.existsSync(sceneAbs(name)) ? fs.createReadStream(sceneAbs(name)) : null;
+const pickFile = (f) => (Array.isArray(f) ? f[0] : f) || null;
+const sceneAbs = (name) => path.join(process.cwd(), "scenes", name);
+const readLocalStream = (name) => (fs.existsSync(sceneAbs(name)) ? fs.createReadStream(sceneAbs(name)) : null);
 
 export default async function handler(req, res) {
   if (setCors(req, res)) return;
@@ -53,19 +69,23 @@ export default async function handler(req, res) {
   if (!token) return res.status(401).json({ error: "No token" });
 
   let email;
-  try { ({ email } = jwt.verify(token, process.env.JWT_SECRET)); }
-  catch { return res.status(401).json({ error: "Invalid token" }); }
+  try {
+    ({ email } = jwt.verify(token, process.env.JWT_SECRET));
+  } catch {
+    return res.status(401).json({ error: "Invalid token" });
+  }
 
   // 2) 免费次数校验（10 次）（Upstash）
-  const key = "free_used:" + crypto.createHash("sha256").update(email).digest("hex");
+  const key = "free_count:" + crypto.createHash("sha256").update(email).digest("hex");
   let usedCount = 0;
   try {
     if (redisClient) {
-      const used = await redisClient.get(key);
-      count = parseInt(current || "0", 10);
-  if (count >= 10) {
-    return res.status(403).json({ error: "已用完 10 次免费机会" });
-  }
+      const current = await redisClient.get(key); // string|null
+      usedCount = parseInt(current || "0", 10);
+      if (usedCount >= 10) {
+        return res.status(403).json({ error: "已用完 10 次免费机会", used: usedCount, remaining: 0 });
+      }
+    }
   } catch (e) {
     console.warn("Upstash get failed:", e?.message);
   }
@@ -76,7 +96,7 @@ export default async function handler(req, res) {
     keepExtensions: true,
     uploadDir: "/tmp",
     maxFileSize: 8 * 1024 * 1024,
-    filter: ({ mimetype }) => /image\/(jpeg|png|webp|heic|heif)/.test(mimetype || "")
+    filter: ({ mimetype }) => /image\/(jpeg|png|webp|heic|heif)/.test(mimetype || ""),
   });
 
   form.parse(req, async (err, fields, files) => {
@@ -87,8 +107,11 @@ export default async function handler(req, res) {
     if (!src || !tgt) return res.status(400).json({ error: "Need two photos" });
 
     let srcB64 = "";
-    try { srcB64 = fs.readFileSync(src.filepath).toString("base64"); }
-    catch { return res.status(500).json({ error: "Temp file not found" }); }
+    try {
+      srcB64 = fs.readFileSync(src.filepath).toString("base64");
+    } catch {
+      return res.status(500).json({ error: "Temp file not found" });
+    }
 
     const results = []; // { scene, b64 } 列表（最终用于组装 PDF）
 
@@ -112,13 +135,14 @@ export default async function handler(req, res) {
             const srcBuf = fs.readFileSync(src.filepath);
 
             const meta = await sharp(baseBuf).metadata();
-            const W = meta.width || 1024, H = meta.height || 1024;
+            const W = meta.width || 1024,
+              H = meta.height || 1024;
             const thumbW = Math.max(120, Math.round(W * 0.22));
             const srcThumb = await sharp(srcBuf).resize({ width: thumbW }).png().toBuffer();
             const srcMeta = await sharp(srcThumb).metadata();
             const margin = 24;
             const left = W - (srcMeta.width || thumbW) - margin;
-            const top  = H - (srcMeta.height || Math.round(thumbW)) - margin;
+            const top = H - (srcMeta.height || Math.round(thumbW)) - margin;
 
             const label = sceneName.replace(/\.(png|jpg|jpeg|webp)$/i, "");
             const fontSize = Math.max(20, Math.round(W * 0.03));
@@ -129,10 +153,7 @@ export default async function handler(req, res) {
                </svg>`
             );
 
-            const out = await sharp(baseBuf)
-              .composite([{ input: srcThumb, left, top }, { input: svg }])
-              .png()
-              .toBuffer();
+            const out = await sharp(baseBuf).composite([{ input: srcThumb, left, top }, { input: svg }]).png().toBuffer();
 
             results.push({ scene: sceneName, b64: out.toString("base64"), note: "fake-preview" });
           } else {
@@ -153,10 +174,11 @@ export default async function handler(req, res) {
         // 若 SDK 不支持 images.generate 的 image 数组，可改成 images.edits 通路
         const r = await client.images.generate({
           model: "gpt-image-1",
-          prompt: "Replace the main person's face in the scene with the person from the two reference photos. Natural blend, keep pose/body/lighting.",
+          prompt:
+            "Replace the main person's face in the scene with the person from the two reference photos. Natural blend, keep pose/body/lighting.",
           image: [readLocalStream(sceneName), fs.createReadStream(src.filepath), fs.createReadStream(tgt.filepath)],
           size: "768x768",
-          response_format: "b64_json"
+          response_format: "b64_json",
         });
         const b64 = r?.data?.[0]?.b64_json || srcB64;
         results.push({ scene: sceneName, b64 });
@@ -167,9 +189,10 @@ export default async function handler(req, res) {
           if (sharp) {
             const baseBuf = fs.readFileSync(scenePath);
             const srcBuf = fs.readFileSync(src.filepath);
-            const out = await sharp(baseBuf).composite([
-              { input: await sharp(srcBuf).resize({ width: 200 }).png().toBuffer(), left: 24, top: 24 }
-            ]).png().toBuffer();
+            const out = await sharp(baseBuf)
+              .composite([{ input: await sharp(srcBuf).resize({ width: 200 }).png().toBuffer(), left: 24, top: 24 }])
+              .png()
+              .toBuffer();
             results.push({ scene: sceneName, b64: out.toString("base64"), note: "fallback-fake" });
           } else {
             const sceneOnlyB64 = fs.readFileSync(scenePath).toString("base64");
@@ -181,7 +204,7 @@ export default async function handler(req, res) {
       }
     }
 
-    // 5) 记一次免费（成功走完整流程即记一次；如需“成功才记”，可增加判断）
+    // 5) 计数 +1（有 Upstash 才执行）
     try {
       if (redisClient) {
         await redisClient.incr(key);
@@ -192,8 +215,12 @@ export default async function handler(req, res) {
     }
 
     // 6) 清理临时文件
-    try { fs.unlinkSync(src.filepath); } catch {}
-    try { fs.unlinkSync(tgt.filepath); } catch {}
+    try {
+      fs.unlinkSync(src.filepath);
+    } catch {}
+    try {
+      fs.unlinkSync(tgt.filepath);
+    } catch {}
 
     // 7) 直接生成并返回 PDF（二进制流）
     res.setHeader("Content-Type", "application/pdf");
@@ -224,9 +251,9 @@ export default async function handler(req, res) {
       } catch {
         // 单张失败则给占位页
         doc.addPage({ size: "A4", margin: 48 });
-        doc.fontSize(18).fillColor("#333").text("图片渲染失败", { align: "center" })
-           .moveDown().fontSize(12).fillColor("#666")
-           .text(`Scene: ${it.scene}`, { align: "center" });
+        doc.fontSize(18).fillColor("#333").text("图片渲染失败", { align: "center" }).moveDown().fontSize(12).fillColor("#666").text(`Scene: ${it.scene}`, {
+          align: "center",
+        });
       }
     }
 
