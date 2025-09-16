@@ -56,11 +56,12 @@ if (redisClient) {
   const current = await redisClient.get(key);
   count = parseInt(current || "0", 10);
 }
+const remaining = Math.max(0, 10 - count);
 return res.status(200).json({ ok: true, email, used: count, remaining: Math.max(0, 10 - count) });
     }
 
     const used = await redisClient.get<string | null>(key);
-    return res.status(200).json({ ok: true, email, used: count, remaining: Math.max(0, 10 - count)});
+    return res.status(200).json({ ok: true, email, used: count, remaining });
   } catch (e) {
     return res.status(401).json({ ok: false, error: "Invalid or expired token" });
   }
