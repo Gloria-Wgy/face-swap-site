@@ -18,7 +18,7 @@ const redisClient =
     : null;
 
 // 允许跨域的前端域名
-const ALLOWED_ORIGINS = ["https://chatgpt-web-demo-alpha.vercel.app"];
+const ALLOWED_ORIGINS = ["https://face-swap-site.vercel.app"];
 
 // 与 /scenes 文件名完全一致（区分大小写）
 const SCENES = [
