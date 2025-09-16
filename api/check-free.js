@@ -4,7 +4,7 @@ import jwt from "jsonwebtoken";
 import crypto from "crypto";
 import { Redis } from "@upstash/redis";
 
-// ====== Upstash REST 客户端（未配置则为 null，自动跳过限次）======
+// Upstash（未配置则为 null，自动跳过限次，方便联调）
 const redisClient =
   process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN
     ? new Redis({
@@ -13,12 +13,15 @@ const redisClient =
       })
     : null;
 
-// 允许的前端域名（和其他 API 一致）
-const ALLOWED_ORIGINS = ["https://face-swap-site.vercel.app"];
+// CORS：支持从环境变量配置多个来源，逗号分隔
+const ORIGINS =
+  (process.env.FRONTEND_ORIGIN || "https://face-swap-site.vercel.app")
+    .split(",")
+    .map(s => s.trim());
 
 function setCors(req, res) {
   const origin = req.headers.origin;
-  if (origin && ALLOWED_ORIGINS.includes(origin)) {
+  if (origin && ORIGINS.includes(origin)) {
     res.setHeader("Access-Control-Allow-Origin", origin);
   }
   res.setHeader("Vary", "Origin");
@@ -33,12 +36,14 @@ function setCors(req, res) {
 
 export default async function handler(req, res) {
   if (setCors(req, res)) return;
-
   if (req.method !== "GET") {
     return res.status(405).json({ ok: false, error: "Only GET allowed" });
   }
 
-  const { token } = req.query || {};
+  // token: 支持 query 或 Authorization 头
+  const auth = req.headers.authorization || "";
+  const bearer = auth.startsWith("Bearer ") ? auth.slice(7) : null;
+  const token = bearer || (req.query ? req.query.token : null);
   if (!token) {
     return res.status(400).json({ ok: false, error: "Missing token" });
   }
@@ -47,12 +52,16 @@ export default async function handler(req, res) {
     const { email } = jwt.verify(token, process.env.JWT_SECRET);
     const key = "free_used:" + crypto.createHash("sha256").update(email).digest("hex");
 
-    // 未配置 Upstash 时，默认认为“未使用过”，方便先联调
     if (!redisClient) {
-      return res.status(200).json({ ok: true, email, used: false, note: "no upstash, skipping limit" });
+      return res.status(200).json({
+        ok: true,
+        email,
+        used: false,
+        note: "no upstash configured, skipping limit"
+      });
     }
 
-    const used = await redisClient.get(key); // string | null
+    const used = await redisClient.get<string | null>(key);
     return res.status(200).json({ ok: true, email, used: used === "1" });
   } catch (e) {
     return res.status(401).json({ ok: false, error: "Invalid or expired token" });
