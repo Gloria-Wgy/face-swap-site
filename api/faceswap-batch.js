@@ -56,8 +56,9 @@ export default async function handler(req, res) {
   try { ({ email } = jwt.verify(token, process.env.JWT_SECRET)); }
   catch { return res.status(401).json({ error: "Invalid token" }); }
 
-  // 2) 免费一次（Upstash）
+  // 2) 免费次数校验（10 次）（Upstash）
   const key = "free_used:" + crypto.createHash("sha256").update(email).digest("hex");
+  let usedCount = 0;
   try {
     if (redisClient) {
       const used = await redisClient.get(key);
@@ -181,8 +182,14 @@ export default async function handler(req, res) {
     }
 
     // 5) 记一次免费（成功走完整流程即记一次；如需“成功才记”，可增加判断）
-    try { if (redisClient) await redisClient.set(key, "1", { ex: 60 * 60 * 24 * 365 }); }
-    catch (e) { console.warn("Upstash set failed:", e?.message); }
+    try {
+      if (redisClient) {
+        await redisClient.incr(key);
+        await redisClient.expire(key, 60 * 60 * 24 * 365); // 1 年
+      }
+    } catch (e) {
+      console.warn("Upstash incr/expire failed:", e?.message);
+    }
 
     // 6) 清理临时文件
     try { fs.unlinkSync(src.filepath); } catch {}
