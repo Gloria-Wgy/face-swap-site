@@ -2,19 +2,22 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
-  <title>上传照片生成写真集（免费预览一次）</title>
+  <title>上传照片生成 10 张换脸场景 PDF（免费预览一次）</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
-    body { font-family: Arial, sans-serif; max-width: 880px; margin: 24px auto; padding: 0 16px; }
-    h1 { margin-bottom: 4px; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, "PingFang SC", "Microsoft Yahei", sans-serif; max-width: 900px; margin: 24px auto; padding: 0 16px; }
+    h1 { margin: 8px 0 4px; line-height: 1.3; }
     .muted { color: #666; font-size: 14px; }
-    .row { margin: 12px 0; }
-    input[type="file"] { display:block; margin: 6px 0; }
-    button { padding: 8px 14px; cursor: pointer; }
+    .row { margin: 14px 0; }
+    input[type="file"] { display:block; margin: 6px 0 10px; }
+    input[type="email"], input[type="text"] { width: 320px; max-width: 100%; padding: 8px 10px; font-size: 14px; }
+    button { padding: 10px 16px; cursor: pointer; border-radius: 6px; border: 1px solid #dadada; background: #fff; }
+    button:hover { background: #f7f7f7; }
     #gallery { margin-top:16px; display:grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap:12px; }
-    .card { border:1px solid #e5e5e5; border-radius:8px; padding:8px; }
+    .card { border:1px solid #e5e5e5; border-radius:8px; padding:8px; background:#fff; }
     .card img { width:100%; border-radius:6px; display:block; }
-    #status { margin-top:10px; font-weight:bold; }
+    #status { margin-top:12px; font-weight:bold; }
+    hr { border:none; border-top:1px solid #eee; margin: 18px 0; }
   </style>
 </head>
 <body>
@@ -25,7 +28,7 @@
     <label>邮箱（获取上传资格 token）：</label>
     <input id="email" type="email" placeholder="you@example.com" />
     <button id="getLinkBtn">获取上传链接（MVP：直接返回 token）</button>
-    <div class="muted">也可直接在 URL 上携带 ?token=... 访问本页。</div>
+    <div class="muted">也可直接在 URL 上携带 <code>?token=...</code> 访问本页。</div>
   </div>
 
   <hr/>
@@ -42,113 +45,113 @@
   <div id="gallery"></div>
 
   <script>
-  const API_BASE = "https://face-swap-site.vercel.app";
+    // ===== 配置你的后端域名 =====
+    const API_BASE = "https://face-swap-site.vercel.app";
 
-  // 1) 优先从 URL 取 token；没有的话尝试从本地缓存拿（上次获取后存的）
-  let token = new URLSearchParams(location.search).get("token")
-           || localStorage.getItem("faceswap_token")
-           || "";
+    // 从 URL 读取 token；也可以通过“获取上传链接”按钮拿到后自动刷新页面携带 token
+    let token = new URLSearchParams(location.search).get("token") || "";
 
-  const emailInput = document.getElementById("email");
-  const getLinkBtn  = document.getElementById("getLinkBtn");
-  const goBtn       = document.getElementById("goBtn");
-  const statusBox   = document.getElementById("status");
-  const gallery     = document.getElementById("gallery");
+    const emailInput = document.getElementById("email");
+    const getLinkBtn  = document.getElementById("getLinkBtn");
+    const goBtn       = document.getElementById("goBtn");
+    const statusBox   = document.getElementById("status");
+    const gallery     = document.getElementById("gallery");
 
-  // 小提示：页面右上角显示 token 是否已就绪
-  function markTokenStatus() {
-    statusBox.textContent = token ? "已获取上传资格 token ✅" : "尚未获取 token";
-  }
-  markTokenStatus();
+    // 获取上传链接：成功后自动把 token 写入 URL（location.replace 不留历史记录）
+    getLinkBtn.onclick = async () => {
+      const email = (emailInput.value || "").trim();
+      if (!email) return alert("请输入邮箱");
+      try {
+        const r = await fetch(`${API_BASE}/api/request-magic-link`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email })
+        });
+        const data = await r.json();
+        if (!r.ok || !data?.ok || !data?.token) {
+          throw new Error(data?.error || "请求失败");
+        }
+        const url = new URL(location.href);
+        url.searchParams.set("token", data.token);
+        // 可选：移除其它多余参数
+        for (const k of Array.from(url.searchParams.keys())) {
+          if (k !== "token") url.searchParams.delete(k);
+        }
+        location.replace(url.toString());
+      } catch (e) {
+        alert("获取链接失败：" + e.message);
+      }
+    };
 
-  // 2) 点击“获取上传链接”：后端返回 token，自动把 token 写入 URL 并刷新本页
-  getLinkBtn.onclick = async () => {
-    const email = (emailInput.value || "").trim();
-    if (!email) return alert("请输入邮箱");
+    // 页面加载时，如果已携带 token，小提示一下
+    window.addEventListener("DOMContentLoaded", () => {
+      if (token) {
+        const short = token.slice(0, 12) + "…";
+        const hint = document.createElement("div");
+        hint.className = "muted";
+        hint.style.marginTop = "6px";
+        hint.textContent = `已携带 token：${short}`;
+        document.querySelector(".row")?.appendChild(hint);
+      }
+    });
 
-    try {
-      const r = await fetch(`${API_BASE}/api/request-magic-link`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email })
-      });
-      const data = await r.json();
-      if (!r.ok || !data?.ok) throw new Error(data?.error || "请求失败");
+    // 主流程：上传两张图 → 批量生成 → 合成 PDF
+    goBtn.onclick = async () => {
+      try {
+        if (!token) return alert("缺少上传资格 token，请先获取或在链接上携带 ?token=...");
 
-      token = data.token;
-      // 本地存一份，避免刷新丢失
-      localStorage.setItem("faceswap_token", token);
+        const s = document.getElementById("source").files[0];
+        const t = document.getElementById("target").files[0];
+        if (!s || !t) return alert("请先选择两张照片");
 
-      // 把 token 写进当前 URL，并用 location.replace 刷新（不增加历史记录）
-      const url = new URL(location.href);
-      url.searchParams.set("token", token);
-      location.replace(url.toString()); // 刷新后，页面初始化会自动读取到 token
-    } catch (e) {
-      alert("获取链接失败：" + e.message);
-    }
-  };
+        // 可选：先查是否已用过免费
+        const chkRes = await fetch(`${API_BASE}/api/check-free?token=${encodeURIComponent(token)}`);
+        const chk = await chkRes.json();
+        if (!chkRes.ok || !chk.ok) return alert("token 无效或过期");
+        if (chk.used) return alert("该邮箱的免费次数已用完");
 
-  // 3) 生成按钮：上传两张图 → 生成10张 → 合成PDF
-  goBtn.onclick = async () => {
-    try {
-      if (!token) return alert("缺少上传资格 token，请先点击“获取上传链接”。");
+        statusBox.textContent = "正在生成，请稍候…";
+        gallery.innerHTML = "";
 
-      const s = document.getElementById("source").files[0];
-      const t = document.getElementById("target").files[0];
-      if (!s || !t) return alert("请先选择两张照片");
+        // 1) faceswap-batch：multipart 上传两张源脸
+        const fd = new FormData();
+        fd.append("source", s);
+        fd.append("target", t);
 
-      // 可选：先校验免费次数
-      const chkRes = await fetch(`${API_BASE}/api/check-free?token=${encodeURIComponent(token)}`);
-      const chk = await chkRes.json();
-      if (!chk.ok) return alert("token 无效或过期，请重新获取");
-      if (chk.used) return alert("该邮箱的免费次数已用完");
+        const res = await fetch(`${API_BASE}/api/faceswap-batch`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+          body: fd
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data?.error || "生成失败");
+        if (!data.images?.length) throw new Error("未返回图片");
 
-      statusBox.textContent = "正在生成，请稍候…";
-      gallery.innerHTML = "";
+        // 预览 10 张缩略图
+        data.images.forEach(it => {
+          const div = document.createElement("div");
+          div.className = "card";
+          div.innerHTML = `<div class="muted" style="margin-bottom:6px;">${it.scene}</div>
+                           <img src="data:image/png;base64,${it.b64}" loading="lazy" />`;
+          gallery.appendChild(div);
+        });
 
-      // 上传两张图（multipart）
-      const fd = new FormData();
-      fd.append("source", s);
-      fd.append("target", t);
-
-      const res = await fetch(`${API_BASE}/api/faceswap-batch`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
-        body: fd
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data?.error || "生成失败");
-      if (!data.images?.length) throw new Error("未返回图片");
-
-      // 预览缩略图
-      data.images.forEach(it => {
-        const div = document.createElement("div");
-        div.className = "card";
-        div.innerHTML = `<div class="muted" style="margin-bottom:6px;">${it.scene}</div>
-                         <img src="data:image/png;base64,${it.b64}" />`;
-        gallery.appendChild(div);
-      });
-
-      // 合成 PDF
-      statusBox.textContent = "正在生成 PDF 预览…";
-      const pdfRes = await fetch(`${API_BASE}/api/generate-pdf`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ images: data.images, orderId: "free" })
-      });
-      if (!pdfRes.ok) throw new Error("PDF 生成失败");
-
-      const blob = await pdfRes.blob();
-      const url = URL.createObjectURL(blob);
-      window.open(url, "_blank");
-      statusBox.textContent = "已生成 PDF 预览 ✅";
-    } catch (e) {
-      statusBox.textContent = "出错：" + e.message;
-    }
-  };
-
-  // 若URL里已有 token，刷新后把状态标绿
-  if (token) markTokenStatus();
-</script>
+        // 2) generate-pdf：把生成的 10 张合并为 PDF（新窗口打开）
+        statusBox.textContent = "正在生成 PDF 预览…";
+        const pdfRes = await fetch(`${API_BASE}/api/generate-pdf`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ images: data.images, orderId: "free" })
+        });
+        if (!pdfRes.ok) throw new Error("PDF 生成失败");
+        const blob = await pdfRes.blob();
+        const url = URL.createObjectURL(blob);
+        window.open(url, "_blank");
+        statusBox.textContent = "已生成 PDF 预览 ✅";
+      } catch (e) {
+        statusBox.textContent = "出错：" + e.message;
+      }
+    };
+  </script>
 </body>
 </html>
