@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
-  <title>上传两张照片 → 生成 10 张场景 PDF（免费预览10次）</title>
+  <title>上传两张照片 → 生成 10 张场景 PDF（免费预览）</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
     :root { color-scheme: light dark; }
@@ -13,20 +13,25 @@
     input[type="file"] { display:block; margin: 6px 0 10px; }
     input[type="email"] { width: 320px; max-width: 100%; padding: 8px 10px; font-size: 14px; }
     button { padding: 10px 16px; cursor: pointer; border-radius: 6px; border: 1px solid #dadada; background: #fff; }
-    button:hover { background: #f7f7f7; }
+    button[disabled] { cursor: not-allowed; opacity: .65; }
+    button:hover:not([disabled]) { background: #f7f7f7; }
     #status { margin-top:12px; font-weight:bold; min-height: 1.2em; }
+    #quota { margin-top:8px; font-size:14px; color:#444; }
+    #tokenHint { margin-top:6px; font-size:12px; color:#666; }
     hr { border:none; border-top:1px solid #eee; margin: 18px 0; }
   </style>
 </head>
 <body>
   <h1>上传两张照片，生成 10 张场景 PDF 预览</h1>
-  <div class="muted">每个邮箱仅免费10次（预览带水印）</div>
+  <div class="muted">每个邮箱最多可免费使用 10 次（预览带水印）</div>
 
   <div class="row">
     <label>邮箱：</label>
     <input id="email" type="email" placeholder="you@example.com" />
     <button id="getLinkBtn">获取上传链接</button>
-    <div class="muted">点击后本页会自动携带 <code>?token=...</code>。</div>
+    <div class="muted">点击后本页会自动携带 <code>?token=...</code></div>
+    <div id="quota"></div>
+    <div id="tokenHint" class="muted"></div>
   </div>
 
   <hr/>
@@ -42,16 +47,43 @@
   <div id="status"></div>
 
   <script>
-    // ===== 修改成你的后端域名（与 CORS 白名单一致）=====
     const API_BASE = "https://face-swap-site.vercel.app";
-
-    // 从 URL 读取 token；点击“获取上传链接”会自动刷新到 ?token=...
     let token = new URLSearchParams(location.search).get("token") || "";
 
     const emailInput = document.getElementById("email");
     const getLinkBtn = document.getElementById("getLinkBtn");
     const goBtn = document.getElementById("goBtn");
     const statusBox = document.getElementById("status");
+    const quotaBox = document.getElementById("quota");
+    const tokenHint = document.getElementById("tokenHint");
+
+    // 工具：根据剩余次数更新按钮状态
+    function applyQuotaUI(remaining, used) {
+      quotaBox.textContent = `已用：${used}/10，剩余：${remaining}/10`;
+      if (remaining <= 0) {
+        goBtn.disabled = true;
+        goBtn.title = "本邮箱的免费次数已用完";
+      } else {
+        goBtn.disabled = false;
+        goBtn.title = "";
+      }
+    }
+
+    // 查询剩余次数（带 token）
+    async function fetchQuotaWithToken() {
+      if (!token) return;
+      try {
+        const r = await fetch(`${API_BASE}/api/check-free?token=${encodeURIComponent(token)}`);
+        const data = await r.json();
+        if (data.ok) {
+          applyQuotaUI(data.remaining, data.used);
+          const short = token.slice(0, 16) + "…";
+          tokenHint.textContent = `已携带 token：${short}`;
+        } else {
+          quotaBox.textContent = "";
+        }
+      } catch { /* 忽略 */ }
+    }
 
     // 获取上传 token，并显示剩余次数
     getLinkBtn.onclick = async () => {
@@ -67,37 +99,21 @@
         if (!r.ok || !data?.ok || !data?.token) {
           throw new Error(data?.error || "请求失败");
         }
-
-        // 更新剩余次数提示
-        quotaBox.textContent = `已用：${data.used}/10，剩余：${data.remaining}/10`;
-
+        // 先显示配额
+        applyQuotaUI(data.remaining, data.used);
         // 自动刷新 URL 并带上 token
         const url = new URL(location.href);
         url.searchParams.set("token", data.token);
-        // 可选：移除其他无关参数
-        for (const k of Array.from(url.searchParams.keys())) {
-          if (k !== "token") url.searchParams.delete(k);
-        }
         location.replace(url.toString());
       } catch (e) {
         alert("获取链接失败：" + e.message);
       }
     };
 
-    // 页面加载时，如果有 token，调用 check-free 查看剩余次数
-    async function showQuota() {
-      if (!token) return;
-      try {
-        const r = await fetch(`${API_BASE}/api/check-free?token=${encodeURIComponent(token)}`);
-        const data = await r.json();
-        if (data.ok) {
-          quotaBox.textContent = `已用：${data.used}/10，剩余：${data.remaining}/10`;
-        }
-      } catch {}
-    }
-    showQuota();
+    // 页面载入时，如已带 token，则显示配额
+    fetchQuotaWithToken();
 
-    // 生成：直接向 /api/faceswap-batch 发送 multipart，返回 PDF 文件流
+    // 生成：兼容 batch 返回 PDF 或 JSON(images)
     goBtn.onclick = async () => {
       try {
         if (!token) return alert("缺少 token，请先获取上传链接");
@@ -105,7 +121,7 @@
         const t = document.getElementById("target").files[0];
         if (!s || !t) return alert("请先选择两张照片");
 
-        statusBox.textContent = "正在生成 PDF，请稍候…";
+        statusBox.textContent = "正在生成，请稍候…";
 
         const fd = new FormData();
         fd.append("source", s);
@@ -117,27 +133,47 @@
           body: fd
         });
 
-        // 失败时尝试取 JSON 错误信息
-        if (!res.ok) {
-          let msg = "生成失败";
+        // 若配额用尽，后端会返回 403，尝试读取错误 JSON
+        if (res.status === 403) {
+          let msg = "免费次数已用完";
           try {
             const j = await res.json();
-            if (j?.error) msg = j.error;
+            if (j?.remaining === 0 || j?.error) msg = j.error || msg;
           } catch {}
+          applyQuotaUI(0, 10);
           throw new Error(msg);
         }
 
-        // 直接拿 PDF Blob 并打开新窗口
-        const blob = await res.blob();                  // ← 后端已返回 application/pdf
-        const url = URL.createObjectURL(blob);
-        window.open(url, "_blank");                     // 新标签页预览 PDF
-        statusBox.textContent = "已生成 PDF ✅";
-      } catch (e) {
-        statusBox.textContent = "出错：" + e.message;
-      }
+        const ct = (res.headers.get("content-type") || "").toLowerCase();
 
-      // 生成成功后，刷新剩余次数显示
-        showQuota();
+        if (ct.startsWith("application/pdf")) {
+          // 直接返回 PDF 的版本
+          const pdfBlob = await res.blob();
+          const url = URL.createObjectURL(pdfBlob);
+          window.open(url, "_blank");
+          statusBox.textContent = "已生成 PDF ✅";
+        } else {
+          // 返回 JSON(images) 的版本 → 再请求 generate-pdf
+          const data = await res.json().catch(() => null);
+          if (!res.ok) throw new Error((data && data.error) || "生成失败");
+          if (!data || !Array.isArray(data.images) || data.images.length === 0) {
+            throw new Error("未返回图片数据");
+          }
+          statusBox.textContent = "正在生成 PDF，请稍候…";
+          const pdfRes = await fetch(`${API_BASE}/api/generate-pdf`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ images: data.images, orderId: "free" })
+          });
+          if (!pdfRes.ok) throw new Error("PDF 生成失败");
+          const blob = await pdfRes.blob();
+          const url = URL.createObjectURL(blob);
+          window.open(url, "_blank");
+          statusBox.textContent = "已生成 PDF ✅";
+        }
+
+        // 成功后刷新配额（剩余 -1）
+        fetchQuotaWithToken();
       } catch (e) {
         statusBox.textContent = "出错：" + e.message;
       }
